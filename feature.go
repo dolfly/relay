@@ -24,8 +24,11 @@ const (
 )
 
 var (
-	ErrShortBuffer = errors.New("short buffer")
-	ErrBadAddrType = errors.New("bad address type")
+	ErrShortBuffer     = errors.New("short buffer")
+	ErrBadAddrType     = errors.New("bad address type")
+	ErrBadTunnelID     = errors.New("bad tunnel id")
+	ErrBadConnectorID  = errors.New("bad connector id")
+	ErrBadNetworkID    = errors.New("bad network id")
 )
 
 // Feature represents a feature the client or server owned.
@@ -178,13 +181,16 @@ func (f *AddrFeature) Type() FeatureType {
 }
 
 func (f *AddrFeature) ParseFrom(address string) error {
-	host, sport, err := net.SplitHostPort(address)
-	if err != nil {
+	host, sport, serr := net.SplitHostPort(address)
+	if serr != nil {
 		host = address
 	}
-	port, err := strconv.Atoi(sport)
-	if err != nil {
-		port = 0
+	port, aerr := strconv.Atoi(sport)
+	if aerr != nil && serr == nil {
+		return aerr
+	}
+	if host == "" {
+		return errors.New("empty host")
 	}
 
 	f.Host = host
@@ -227,8 +233,7 @@ func (f *AddrFeature) Encode() ([]byte, error) {
 		}
 		buf.Write(ip6)
 	default:
-		buf.WriteByte(byte(AddrIPv4))
-		buf.Write(net.IPv4zero.To4())
+		return nil, ErrBadAddrType
 	}
 
 	var bp [2]byte
@@ -310,7 +315,7 @@ func NewPrivateTunnelID(v []byte) (tid TunnelID) {
 	return
 }
 
-func (tid TunnelID) ID() (id [connectorIDLen]byte) {
+func (tid TunnelID) ID() (id [tunnelIDLen]byte) {
 	copy(id[:], tid[:tunnelIDLen])
 	return
 }
@@ -465,7 +470,7 @@ func (f *TunnelFeature) Encode() ([]byte, error) {
 }
 
 func (f *TunnelFeature) Decode(b []byte) error {
-	if len(b) < tunnelIDLen {
+	if len(b) < len(f.ID) {
 		return ErrShortBuffer
 	}
 	copy(f.ID[:], b)

@@ -116,6 +116,7 @@ func (req *Request) WriteTo(w io.Writer) (n int64, err error) {
 	n += int64(flen)
 	if flen > 0xFFFF {
 		err = errors.New("features maximum length exceeded")
+		n = 0
 		return
 	}
 
@@ -200,6 +201,7 @@ func (resp *Response) WriteTo(w io.Writer) (n int64, err error) {
 	n += int64(flen)
 	if flen > 0xFFFF {
 		err = errors.New("features maximum length exceeded")
+		n = 0
 		return
 	}
 
