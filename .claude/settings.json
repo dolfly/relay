@@ -1,0 +1,43 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(go build:*)",
+      "Bash(go test:*)",
+      "Bash(go vet:*)",
+      "Bash(go mod:*)",
+      "Bash(go fmt:*)",
+      "Bash(gofmt:*)",
+      "Bash(git:*)",
+      "Bash(ls:*)",
+      "Skill(update-config)",
+      "Skill(update-config:*)",
+      "Bash(gh pr:*)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "case \"$CLAUDE_TOOL_INPUT_FILE_PATH\" in *.go) gofmt -w \"$CLAUDE_TOOL_INPUT_FILE_PATH\" && echo '✓ gofmt applied' ;; esac",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "case \"$CLAUDE_TOOL_INPUT_FILE_PATH\" in */go.mod|*/go.sum) echo '⛔ Direct edits to go.mod/go.sum are blocked. Use \"go mod tidy\" instead.' >&2 && exit 2 ;; esac",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}
