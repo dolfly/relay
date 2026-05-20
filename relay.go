@@ -93,37 +93,36 @@ func (req *Request) ReadFrom(r io.Reader) (n int64, err error) {
 }
 
 func (req *Request) WriteTo(w io.Writer) (n int64, err error) {
-	var buf bytes.Buffer
-
-	buf.WriteByte(req.Version)
-	buf.WriteByte(byte(req.Cmd))
-	buf.Write([]byte{0, 0}) // placeholder for features length
-	n += 4
-
+	// Collect encoded features and compute total length.
+	encoded := make([][]byte, len(req.Features))
 	flen := 0
-	for _, f := range req.Features {
-		var b []byte
-		b, err = f.Encode()
+	for i, f := range req.Features {
+		b, err := f.Encode()
 		if err != nil {
-			return
+			return 0, err
 		}
-		binary.Write(&buf, binary.BigEndian, f.Type())
-		binary.Write(&buf, binary.BigEndian, uint16(len(b)))
-		flen += featureHeaderLen
-		nn, _ := buf.Write(b)
-		flen += nn
+		encoded[i] = b
+		flen += featureHeaderLen + len(b)
 	}
-	n += int64(flen)
 	if flen > 0xFFFF {
-		err = errors.New("features maximum length exceeded")
-		n = 0
-		return
+		return 0, errors.New("features maximum length exceeded")
 	}
 
-	b := buf.Bytes()
-	binary.BigEndian.PutUint16(b[2:4], uint16(flen))
+	buf := make([]byte, 4+flen)
+	buf[0] = req.Version
+	buf[1] = byte(req.Cmd)
+	binary.BigEndian.PutUint16(buf[2:4], uint16(flen))
 
-	return buf.WriteTo(w)
+	pos := 4
+	for i, f := range req.Features {
+		buf[pos] = byte(f.Type())
+		binary.BigEndian.PutUint16(buf[pos+1:pos+3], uint16(len(encoded[i])))
+		copy(buf[pos+3:], encoded[i])
+		pos += featureHeaderLen + len(encoded[i])
+	}
+
+	nn, err := w.Write(buf)
+	return int64(nn), err
 }
 
 // Response is a relay server response.
@@ -178,37 +177,36 @@ func (resp *Response) ReadFrom(r io.Reader) (n int64, err error) {
 }
 
 func (resp *Response) WriteTo(w io.Writer) (n int64, err error) {
-	var buf bytes.Buffer
-
-	buf.WriteByte(resp.Version)
-	buf.WriteByte(resp.Status)
-	buf.Write([]byte{0, 0}) // placeholder for features length
-	n += 4
-
+	// Collect encoded features and compute total length.
+	encoded := make([][]byte, len(resp.Features))
 	flen := 0
-	for _, f := range resp.Features {
-		var b []byte
-		b, err = f.Encode()
+	for i, f := range resp.Features {
+		b, err := f.Encode()
 		if err != nil {
-			return
+			return 0, err
 		}
-		binary.Write(&buf, binary.BigEndian, f.Type())
-		binary.Write(&buf, binary.BigEndian, uint16(len(b)))
-		flen += featureHeaderLen
-		nn, _ := buf.Write(b)
-		flen += nn
+		encoded[i] = b
+		flen += featureHeaderLen + len(b)
 	}
-	n += int64(flen)
 	if flen > 0xFFFF {
-		err = errors.New("features maximum length exceeded")
-		n = 0
-		return
+		return 0, errors.New("features maximum length exceeded")
 	}
 
-	b := buf.Bytes()
-	binary.BigEndian.PutUint16(b[2:4], uint16(flen))
+	buf := make([]byte, 4+flen)
+	buf[0] = resp.Version
+	buf[1] = resp.Status
+	binary.BigEndian.PutUint16(buf[2:4], uint16(flen))
 
-	return buf.WriteTo(w)
+	pos := 4
+	for i, f := range resp.Features {
+		buf[pos] = byte(f.Type())
+		binary.BigEndian.PutUint16(buf[pos+1:pos+3], uint16(len(encoded[i])))
+		copy(buf[pos+3:], encoded[i])
+		pos += featureHeaderLen + len(encoded[i])
+	}
+
+	nn, err := w.Write(buf)
+	return int64(nn), err
 }
 
 func readFeatures(b []byte) (fs []Feature, err error) {

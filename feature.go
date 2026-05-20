@@ -104,23 +104,20 @@ func (f *UserAuthFeature) Type() FeatureType {
 }
 
 func (f *UserAuthFeature) Encode() ([]byte, error) {
-	var buf bytes.Buffer
-
 	ulen := len(f.Username)
 	if ulen > 0xFF {
 		return nil, errors.New("username maximum length exceeded")
 	}
-	buf.WriteByte(uint8(ulen))
-	buf.WriteString(f.Username)
-
 	plen := len(f.Password)
 	if plen > 0xFF {
 		return nil, errors.New("password maximum length exceeded")
 	}
-	buf.WriteByte(uint8(plen))
-	buf.WriteString(f.Password)
-
-	return buf.Bytes(), nil
+	buf := make([]byte, 2+ulen+plen)
+	buf[0] = uint8(ulen)
+	copy(buf[1:], f.Username)
+	buf[1+ulen] = uint8(plen)
+	copy(buf[2+ulen:], f.Password)
+	return buf, nil
 }
 
 func (f *UserAuthFeature) Decode(b []byte) error {
@@ -174,6 +171,7 @@ type AddrFeature struct {
 	AType AddrType
 	Host  string
 	Port  uint16
+	ip    net.IP // cached parsed IP, populated by ParseFrom or Decode
 }
 
 func (f *AddrFeature) Type() FeatureType {
@@ -196,7 +194,9 @@ func (f *AddrFeature) ParseFrom(address string) error {
 	f.Host = host
 	f.Port = uint16(port)
 	f.AType = AddrDomain
+	f.ip = nil
 	if ip := net.ParseIP(f.Host); ip != nil {
+		f.ip = ip
 		if ip.To4() != nil {
 			f.AType = AddrIPv4
 		} else {
@@ -208,39 +208,50 @@ func (f *AddrFeature) ParseFrom(address string) error {
 }
 
 func (f *AddrFeature) Encode() ([]byte, error) {
-	var buf bytes.Buffer
-
 	switch f.AType {
 	case AddrIPv4:
-		buf.WriteByte(byte(f.AType))
-		ip4 := net.ParseIP(f.Host).To4()
+		buf := make([]byte, 7)
+		buf[0] = byte(AddrIPv4)
+		ip4 := f.ip.To4()
 		if ip4 == nil {
-			ip4 = net.IPv4zero.To4()
+			if f.ip = net.ParseIP(f.Host); f.ip != nil {
+				ip4 = f.ip.To4()
+			}
+			if ip4 == nil {
+				ip4 = net.IPv4zero.To4()
+			}
 		}
-		buf.Write(ip4)
+		copy(buf[1:], ip4)
+		binary.BigEndian.PutUint16(buf[5:], f.Port)
+		return buf, nil
+	case AddrIPv6:
+		buf := make([]byte, 19)
+		buf[0] = byte(AddrIPv6)
+		ip6 := f.ip.To16()
+		if ip6 == nil {
+			if f.ip = net.ParseIP(f.Host); f.ip != nil {
+				ip6 = f.ip.To16()
+			}
+			if ip6 == nil {
+				ip6 = net.IPv6zero.To16()
+			}
+		}
+		copy(buf[1:], ip6)
+		binary.BigEndian.PutUint16(buf[17:], f.Port)
+		return buf, nil
 	case AddrDomain:
-		buf.WriteByte(byte(f.AType))
 		if len(f.Host) > 0xFF {
 			return nil, errors.New("addr maximum length exceeded")
 		}
-		buf.WriteByte(uint8(len(f.Host)))
-		buf.WriteString(f.Host)
-	case AddrIPv6:
-		buf.WriteByte(byte(f.AType))
-		ip6 := net.ParseIP(f.Host).To16()
-		if ip6 == nil {
-			ip6 = net.IPv6zero.To16()
-		}
-		buf.Write(ip6)
+		buf := make([]byte, 4+len(f.Host))
+		buf[0] = byte(AddrDomain)
+		buf[1] = uint8(len(f.Host))
+		copy(buf[2:], f.Host)
+		binary.BigEndian.PutUint16(buf[2+len(f.Host):], f.Port)
+		return buf, nil
 	default:
 		return nil, ErrBadAddrType
 	}
-
-	var bp [2]byte
-	binary.BigEndian.PutUint16(bp[:], f.Port)
-	buf.Write(bp[:])
-
-	return buf.Bytes(), nil
 }
 
 func (f *AddrFeature) Decode(b []byte) error {
@@ -255,15 +266,18 @@ func (f *AddrFeature) Decode(b []byte) error {
 		if len(b) < 3+net.IPv4len {
 			return ErrShortBuffer
 		}
-		f.Host = net.IP(b[pos : pos+net.IPv4len]).String()
+		f.ip = net.IP(b[pos : pos+net.IPv4len])
+		f.Host = f.ip.String()
 		pos += net.IPv4len
 	case AddrIPv6:
 		if len(b) < 3+net.IPv6len {
 			return ErrShortBuffer
 		}
-		f.Host = net.IP(b[pos : pos+net.IPv6len]).String()
+		f.ip = net.IP(b[pos : pos+net.IPv6len])
+		f.Host = f.ip.String()
 		pos += net.IPv6len
 	case AddrDomain:
+		f.ip = nil
 		alen := int(b[pos])
 		if len(b) < 4+alen {
 			return ErrShortBuffer
@@ -464,9 +478,9 @@ func (f *TunnelFeature) Type() FeatureType {
 }
 
 func (f *TunnelFeature) Encode() ([]byte, error) {
-	var buf bytes.Buffer
-	buf.Write(f.ID[:])
-	return buf.Bytes(), nil
+	buf := make([]byte, 20)
+	copy(buf, f.ID[:])
+	return buf, nil
 }
 
 func (f *TunnelFeature) Decode(b []byte) error {
