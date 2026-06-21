@@ -355,7 +355,7 @@ func TestNewFeature(t *testing.T) {
 		{"addr ipv4", FeatureAddr, []byte{byte(AddrIPv4), 127, 0, 0, 1, 0x1F, 0x90}, false},
 		{"tunnel", FeatureTunnel, make([]byte, 20), false},
 		{"network", FeatureNetwork, []byte{0x00, 0x01}, false},
-		{"unknown", FeatureType(0xFF), nil, true},
+		{"unknown", FeatureType(0xFF), nil, false},
 	}
 
 	for _, tt := range tests {
@@ -554,5 +554,82 @@ func TestReadFeatureBodyError(t *testing.T) {
 }
 
 type errReader struct{ err error }
+
+func TestOpaqueFeatureRoundTrip(t *testing.T) {
+	// Create an opaque feature with an unknown type and some arbitrary data.
+	original := &OpaqueFeature{ftype: FeatureType(0xFE), data: []byte{0xAA, 0xBB, 0xCC, 0xDD}}
+
+	if original.Type() != FeatureType(0xFE) {
+		t.Errorf("Type: got %d, want %d", original.Type(), FeatureType(0xFE))
+	}
+
+	// Encode.
+	b, err := original.Encode()
+	if err != nil {
+		t.Fatalf("Encode error: %v", err)
+	}
+	if !bytes.Equal(b, []byte{0xAA, 0xBB, 0xCC, 0xDD}) {
+		t.Errorf("Encode: got %x, want aabbccdd", b)
+	}
+
+	// Decode into a new OpaqueFeature.
+	var decoded OpaqueFeature
+	decoded.ftype = FeatureType(0xFE)
+	if err := decoded.Decode(b); err != nil {
+		t.Fatalf("Decode error: %v", err)
+	}
+	if !bytes.Equal(decoded.data, original.data) {
+		t.Errorf("Decode: got %x, want %x", decoded.data, original.data)
+	}
+}
+
+func TestUnknownFeatureInRequest(t *testing.T) {
+	// Simulate a future version sending an unknown feature type (0xFE)
+	// to an older server. The request should parse without error.
+	req := Request{
+		Version: Version1,
+		Cmd:     CmdConnect,
+		Features: []Feature{
+			&OpaqueFeature{ftype: FeatureType(0xFE), data: []byte{0x11, 0x22}}, // future unknown feature
+			&AddrFeature{AType: AddrIPv4, Host: "1.2.3.4", Port: 1080},          // known feature
+		},
+	}
+
+	var buf bytes.Buffer
+	if _, err := req.WriteTo(&buf); err != nil {
+		t.Fatalf("WriteTo error: %v", err)
+	}
+
+	var parsed Request
+	if _, err := parsed.ReadFrom(&buf); err != nil {
+		t.Fatalf("ReadFrom error: %v", err)
+	}
+
+	// Should have 2 features.
+	if len(parsed.Features) != 2 {
+		t.Fatalf("Features count: got %d, want 2", len(parsed.Features))
+	}
+
+	// First feature should be opaque (unknown type 0xFE).
+	of, ok := parsed.Features[0].(*OpaqueFeature)
+	if !ok {
+		t.Fatalf("First feature type: got %T, want *OpaqueFeature", parsed.Features[0])
+	}
+	if of.Type() != FeatureType(0xFE) {
+		t.Errorf("Opaque type: got %d, want %d", of.Type(), FeatureType(0xFE))
+	}
+	if !bytes.Equal(of.data, []byte{0x11, 0x22}) {
+		t.Errorf("Opaque data: got %x, want 1122", of.data)
+	}
+
+	// Second feature should be the known AddrFeature.
+	af, ok := parsed.Features[1].(*AddrFeature)
+	if !ok {
+		t.Fatalf("Second feature type: got %T, want *AddrFeature", parsed.Features[1])
+	}
+	if af.Host != "1.2.3.4" || af.Port != 1080 {
+		t.Errorf("AddrFeature: got %s:%d, want 1.2.3.4:1080", af.Host, af.Port)
+	}
+}
 
 func (r *errReader) Read([]byte) (int, error) { return 0, r.err }

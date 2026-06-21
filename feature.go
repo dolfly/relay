@@ -61,10 +61,34 @@ func NewFeature(t FeatureType, data []byte) (f Feature, err error) {
 	case FeatureNetwork:
 		f = new(NetworkFeature)
 	default:
-		return nil, errors.New("unknown feature")
+		f = &OpaqueFeature{ftype: t}
 	}
 	err = f.Decode(data)
 	return
+}
+
+// OpaqueFeature is a passthrough Feature for unknown feature types.
+// It preserves the raw bytes so the feature can be round-tripped
+// through encoding/decoding without interpretation.
+// This provides forward compatibility: a newer client can send features
+// unknown to an older server, and the older server will ignore them
+// rather than rejecting the entire request.
+type OpaqueFeature struct {
+	ftype FeatureType
+	data  []byte
+}
+
+func (f *OpaqueFeature) Type() FeatureType {
+	return f.ftype
+}
+
+func (f *OpaqueFeature) Encode() ([]byte, error) {
+	return f.data, nil
+}
+
+func (f *OpaqueFeature) Decode(b []byte) error {
+	f.data = b
+	return nil
 }
 
 func ReadFeature(r io.Reader) (Feature, error) {
